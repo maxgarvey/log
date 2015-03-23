@@ -1,12 +1,9 @@
-// Package queuelog provides a buffered logging class that accumulates logs in
-// memory until the flush threshold is reached which release stored logs, the
-// buffered logger then act as a normal logger.
+// Package queuelog provides a logging class that will send logs to a STOMP queueing server
+// rather than to file.
 //
 // Basic example:
-//                            vvv stomp params vvv           vvv cutoff for buffering
-//     logger := queuelog.New(host, port, user, pass, queue, log.Info,
-//                            vvv maximum buffer depth vvv   vvv timeout in s for buffer send vvv
-//                            maxBufferDepth,                bufferTimeout)
+//                            vvv stomp params vvv           vvv cutoff threshold
+//     logger := queuelog.New(host, port, user, pass, queue, log.Info)
 //
 //     logger.Debug("Connecting to the server...")   // Output goes to buffer
 //     logger.Error("Connection failed")             // Output sends immediately
@@ -33,18 +30,11 @@ type Logger struct {
 	queueName string
 
 	queueWriter stompWriter.StompWriter
-
-	// TODO: buffering stuff
-	//bufferThreshold log.Level // <- cutoff for immediate queueing
-	//maxBufferDepth  int
-	//bufferTimeout   int
-
-	//buffer chan []byte
 }
 
 // New creates a new Logger. Relevant parameters to the stomp queue
 // being connecting to are specified
-func New(host, port, username, password, queueName string, ignoreThreshold log.Level) { //, bufferThreshold log.Level, maxBufferDepth, bufferTimeout int) *Logger {
+func New(host, port, username, password, queueName string, ignoreThreshold log.Level) *Logger {
 
 	queueWriter, err = stompWriter.New(host, port, username, password, queueName)
 	if err != nil {
@@ -52,45 +42,27 @@ func New(host, port, username, password, queueName string, ignoreThreshold log.L
 	}
 
 	logger := &Logger{
-		Logger:      golog.New(queueWriter, ignoreThreshold),
-		hostname:    host,
-		port:        port,
-		username:    username,
-		password:    password,
-		queueName:   queueName,
-		queueWriter: queueWriter,
-		//bufferThreshold: bufferThreshold,
-		//maxBufferDepth:  maxBufferDepth,
-		//bufferTimeout:   bufferTimeout,
+		Logger:          golog.New(queueWriter, ignoreThreshold),
+		hostname:        host,
+		port:            port,
+		username:        username,
+		password:        password,
+		queueName:       queueName,
+		queueWriter:     queueWriter,
 		ignoreThreshold: ignoreThreshold,
 	}
-	//logger.buffer = make(chan []byte, maxBufferDepth)
-
-	// go routine to check buffer
 
 	return &logger
 }
 
 func (l *Logger) output(level log.Level, args ...interface{}) {
-	/*
-		// vvv desired logic
-		if log.Level >= l.bufferThreshold {
-			l.Logger.output(level, args)
-		} else if log.Level >= l.ignoreThreshold {
-			l.buffer <- l.Logger.Formatter(log.Level, args)
-		}
-	*/
-
 	if level > l.ignoreThreshold {
 		return
 	}
 
-	buffer := l.getBuffer()
-	l.Formatter(&buffer.Buffer, level, args...)
+	// additional logic to setup/teardown connections to queue
+	l.queueWriter.Connect()
+	defer l.queueWriter.Disconnect()
 
-	l.writeMutex.Lock()
-	l.Writer(l.out, buffer.Bytes(), level)
-	l.writeMutex.Unlock()
-
-	l.putBuffer(buffer)
+	l.Logger.output(level, args)
 }
